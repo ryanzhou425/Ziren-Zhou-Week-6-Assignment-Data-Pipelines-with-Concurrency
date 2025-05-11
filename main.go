@@ -1,10 +1,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	imageprocessing "goroutines_pipeline/image_processing"
 	"image"
 	"strings"
+	"time"
 )
 
 type Job struct {
@@ -16,12 +18,17 @@ type Job struct {
 func loadImage(paths []string) <-chan Job {
 	out := make(chan Job)
 	go func() {
-		// For each input path create a job and add it to
-		// the out channel
 		for _, p := range paths {
-			job := Job{InputPath: p,
-				OutPath: strings.Replace(p, "images/", "images/output/", 1)}
-			job.Image = imageprocessing.ReadImage(p)
+			img, err := imageprocessing.ReadImage(p)
+			if err != nil {
+				fmt.Printf("Can't load image %s: %v\n", p, err)
+				continue
+			}
+			job := Job{
+				InputPath: p,
+				Image:     img,
+				OutPath:   strings.Replace(p, "images/", "images/output/", 1),
+			}
 			out <- job
 		}
 		close(out)
@@ -32,9 +39,7 @@ func loadImage(paths []string) <-chan Job {
 func resize(input <-chan Job) <-chan Job {
 	out := make(chan Job)
 	go func() {
-		// For each input job, create a new job after resize and add it to
-		// the out channel
-		for job := range input { // Read from the channel
+		for job := range input {
 			job.Image = imageprocessing.Resize(job.Image)
 			out <- job
 		}
@@ -46,7 +51,7 @@ func resize(input <-chan Job) <-chan Job {
 func convertToGrayscale(input <-chan Job) <-chan Job {
 	out := make(chan Job)
 	go func() {
-		for job := range input { // Read from the channel
+		for job := range input {
 			job.Image = imageprocessing.Grayscale(job.Image)
 			out <- job
 		}
@@ -58,9 +63,13 @@ func convertToGrayscale(input <-chan Job) <-chan Job {
 func saveImage(input <-chan Job) <-chan bool {
 	out := make(chan bool)
 	go func() {
-		for job := range input { // Read from the channel
-			imageprocessing.WriteImage(job.OutPath, job.Image)
-			out <- true
+		for job := range input {
+			if err := imageprocessing.WriteImage(job.OutPath, job.Image); err != nil {
+				fmt.Printf("Can't save image %s: %v\n", job.OutPath, err)
+				out <- false
+			} else {
+				out <- true
+			}
 		}
 		close(out)
 	}()
@@ -68,12 +77,18 @@ func saveImage(input <-chan Job) <-chan bool {
 }
 
 func main() {
+	useGoroutines := flag.Bool("goroutines", true, "Use goroutines for processing")
+	flag.Parse()
 
-	imagePaths := []string{"images/image1.jpeg",
+	imagePaths := []string{
+		"images/image1.jpeg",
 		"images/image2.jpeg",
 		"images/image3.jpeg",
 		"images/image4.jpeg",
 	}
+
+	fmt.Printf("With goroutines: %v\n", *useGoroutines)
+	startTime := time.Now()
 
 	channel1 := loadImage(imagePaths)
 	channel2 := resize(channel1)
@@ -82,9 +97,12 @@ func main() {
 
 	for success := range writeResults {
 		if success {
-			fmt.Println("Success!")
+			fmt.Println("Success")
 		} else {
-			fmt.Println("Failed!")
+			fmt.Println("Failed")
 		}
 	}
+
+	duration := time.Since(startTime)
+	fmt.Printf("\nPipeline completed in %v\n", duration)
 }
